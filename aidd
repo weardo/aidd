@@ -163,6 +163,10 @@ case "$CMD" in
         fi
         ;;
 
+    telegram)
+        exec python3 "$AIDD_HOME/telegram_bot.py" --project="$PWD" "$@"
+        ;;
+
     help|--help|-h)
         echo "AIDD — Autonomous AI Development Daemon"
         echo ""
@@ -178,6 +182,7 @@ case "$CMD" in
         echo "  reject <id> <msg>   Reject with feedback (re-queues)"
         echo "  skip <id>           Re-queue a stuck feature"
         echo "  logs <id>           View last 50 lines of agent output"
+        echo "  telegram            Start Telegram bot (two-way)"
         echo "  help                This message"
         ;;
 

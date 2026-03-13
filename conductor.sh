@@ -116,11 +116,19 @@ mkdir -p "$WORKTREE_DIR" "$STATE_DIR/logs" "$STATE_DIR/progress"
 
 notify() {
     local message="$1"
+    local keyboard="${2:-}"
     if [ -n "${AIDD_TELEGRAM_TOKEN:-}" ] && [ -n "${AIDD_TELEGRAM_CHAT_ID:-}" ]; then
+        local payload
+        payload=$(jq -n \
+            --arg chat_id "${AIDD_TELEGRAM_CHAT_ID}" \
+            --arg text "$message" \
+            --argjson reply_markup "${keyboard:-null}" \
+            '{chat_id: $chat_id, text: $text, parse_mode: "Markdown"} +
+             (if $reply_markup then {reply_markup: $reply_markup} else {} end)'
+        )
         curl -s -X POST "https://api.telegram.org/bot${AIDD_TELEGRAM_TOKEN}/sendMessage" \
-            -d chat_id="${AIDD_TELEGRAM_CHAT_ID}" \
-            -d text="$message" \
-            -d parse_mode="Markdown" > /dev/null 2>&1 || true
+            -H "Content-Type: application/json" \
+            -d "$payload" > /dev/null 2>&1 || true
     fi
     echo "[NOTIFY] $message"
 }
@@ -316,10 +324,17 @@ handle_success() {
         test_info="Tests: ${passing} passing, ${failing} failing."
     fi
 
+    local kb_success
+    kb_success=$(jq -n --arg fid "$feature_id" '{inline_keyboard: [
+        [{text: "Approve", callback_data: ("approve:" + $fid)},
+         {text: "Reject", callback_data: ("reject:" + $fid)}],
+        [{text: "Logs", callback_data: ("logs:" + $fid)},
+         {text: "Status", callback_data: "cmd:status"}]
+    ]}')
+
     notify "✅ *$PROJECT_NAME* — Complete: \`$feature_id\`
 ${test_info}
-${pr_url:+PR: $pr_url}
-→ Reply \`/approve $feature_id\` to merge"
+${pr_url:+PR: $pr_url}" "$kb_success"
 
     echo "[$(date '+%H:%M:%S')] Feature complete: $feature_id"
 }
@@ -336,9 +351,15 @@ handle_stuck() {
         log_tail=$(tail -5 "$STATE_DIR/logs/$feature_id.log" 2>/dev/null | head -c 500 || true)
     fi
 
+    local kb_stuck
+    kb_stuck=$(jq -n --arg fid "$feature_id" '{inline_keyboard: [
+        [{text: "Skip (re-queue)", callback_data: ("skip:" + $fid)},
+         {text: "Logs", callback_data: ("logs:" + $fid)}],
+        [{text: "Status", callback_data: "cmd:status"}]
+    ]}')
+
     notify "❌ *$PROJECT_NAME* — Stuck: \`$feature_id\`
-Reason: $reason
-→ Reply \`/logs $feature_id\` or \`/skip $feature_id\`"
+Reason: $reason" "$kb_stuck"
 
     echo "[$(date '+%H:%M:%S')] Feature stuck: $feature_id — $reason"
 }
