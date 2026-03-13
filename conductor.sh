@@ -11,6 +11,19 @@ set -euo pipefail
 AIDD_HOME="${AIDD_HOME:-$HOME/.aidd}"
 source "$AIDD_HOME/.env" 2>/dev/null || true
 
+# Resolve claude binary path (subshells may not inherit user PATH)
+CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "")
+if [ -z "$CLAUDE_BIN" ]; then
+    # Common install locations
+    for p in "$HOME/.local/bin/claude" "$HOME/.npm-global/bin/claude" "/usr/local/bin/claude"; do
+        [ -x "$p" ] && CLAUDE_BIN="$p" && break
+    done
+fi
+if [ -z "$CLAUDE_BIN" ]; then
+    echo "ERROR: claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
+    exit 1
+fi
+
 # Parse flags
 ONCE=false
 DRY_RUN=false
@@ -232,15 +245,30 @@ EOF
 
     notify "🚀 *$PROJECT_NAME* — Starting: \`$feature_id\`"
 
-    # Spawn claude -p in worktree with timeout
+    # Spawn claude -p in worktree
     local exit_code=0
-    timeout "${TIMEOUT_HOURS}h" bash -c "
+    local prompt_file
+    prompt_file=$(mktemp)
+    echo "$prompt" > "$prompt_file"
+
+    # Use gtimeout (brew) or timeout (linux) or fallback to no timeout
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout ${TIMEOUT_HOURS}h"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout ${TIMEOUT_HOURS}h"
+    fi
+
+    # Clean env: unset CLAUDECODE (nesting guard) and SSE_PORT (session binding)
+    $timeout_cmd env -u CLAUDECODE -u CLAUDE_CODE_SSE_PORT -u CLAUDE_CODE_ENTRYPOINT bash -c "
         cd '$worktree_path' && \
-        claude -p '$(echo "$prompt" | sed "s/'/'\\\\''/g")' \
+        '$CLAUDE_BIN' -p \"\$(cat '$prompt_file')\" \
             --permission-mode '$PERMISSION_MODE' \
-            --output-format stream-json \
-            --model '$MODEL'
+            --model '$MODEL' \
+            --verbose
     " > "$log_file" 2>&1 || exit_code=$?
+
+    rm -f "$prompt_file"
 
     # Check result
     if [ $exit_code -eq 0 ]; then
