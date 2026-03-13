@@ -1,0 +1,5 @@
+# AIDD Project Registry — maps names to paths
+# Added automatically by `aidd register` or `aidd init`
+projects:
+  abhishek: /Users/prashantpandey/Desktop/abhishek
+  trade: /Users/prashantpandey/Desktop/trade

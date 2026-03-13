@@ -51,7 +51,7 @@ LINT_CMD=$(yq -r '.commands.lint // ""' aidd.yml 2>/dev/null || echo "")
 if [ -z "$TEST_CMD" ]; then
     # Auto-detect test command
     if [ -f "pytest.ini" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
-        TEST_CMD="python -m pytest tests/ -x -q"
+        TEST_CMD="python3 -m pytest tests/ -x -q"
     elif [ -f "package.json" ]; then
         if grep -q '"vitest"' package.json 2>/dev/null; then
             TEST_CMD="npx vitest run"
