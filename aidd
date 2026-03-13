@@ -1,0 +1,170 @@
+#!/bin/bash
+set -euo pipefail
+
+# AIDD CLI — thin wrapper for project-level commands
+# Usage: aidd <command> [args]
+
+AIDD_HOME="${AIDD_HOME:-$HOME/.aidd}"
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+    init)
+        if [ -f "aidd.yml" ]; then
+            echo "aidd.yml already exists in this directory."
+            exit 1
+        fi
+        cp "$AIDD_HOME/templates/aidd.yml" ./aidd.yml
+        cp "$AIDD_HOME/templates/feature-queue.yml" ./feature-queue.yml
+
+        # Add to .gitignore if it exists
+        if [ -f ".gitignore" ]; then
+            if ! grep -q ".worktrees/" .gitignore 2>/dev/null; then
+                echo -e "\n# AIDD\n.worktrees/\n.aidd/" >> .gitignore
+            fi
+        fi
+
+        echo "Created aidd.yml and feature-queue.yml"
+        echo "Edit them for your project, then run: aidd start"
+        ;;
+
+    start)
+        if [ ! -f "aidd.yml" ]; then
+            echo "No aidd.yml found. Run 'aidd init' first."
+            exit 1
+        fi
+        exec "$AIDD_HOME/conductor.sh" "$@"
+        ;;
+
+    status)
+        if [ ! -f "feature-queue.yml" ]; then
+            echo "No feature-queue.yml found."
+            exit 1
+        fi
+
+        echo "========================================"
+        echo "  AIDD Pipeline Status"
+        echo "========================================"
+        echo ""
+
+        for status in running review stuck queued merged abandoned; do
+            count=$(yq -r "[.features[] | select(.status == \"$status\")] | length" feature-queue.yml 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ]; then
+                case $status in
+                    running)   icon="🔄" ;;
+                    review)    icon="👀" ;;
+                    stuck)     icon="❌" ;;
+                    queued)    icon="📋" ;;
+                    merged)    icon="✅" ;;
+                    abandoned) icon="🗑️" ;;
+                esac
+                echo "  $icon $status: $count"
+
+                yq -r ".features[] | select(.status == \"$status\") | \"     - \" + .id" feature-queue.yml 2>/dev/null
+            fi
+        done
+        echo ""
+        ;;
+
+    queue)
+        if [ ! -f "feature-queue.yml" ]; then
+            echo "No feature-queue.yml found."
+            exit 1
+        fi
+        echo "Feature Queue:"
+        echo ""
+        yq -r '.features[] | "  [" + .status + "] " + .id + " (priority: " + (.priority | tostring) + ")"' feature-queue.yml
+        echo ""
+        ;;
+
+    approve)
+        FEATURE_ID="${1:-}"
+        if [ -z "$FEATURE_ID" ]; then
+            echo "Usage: aidd approve <feature-id>"
+            exit 1
+        fi
+        current_status=$(yq -r ".features[] | select(.id == \"$FEATURE_ID\") | .status" feature-queue.yml)
+        if [ "$current_status" != "review" ]; then
+            echo "Feature '$FEATURE_ID' is not in review status (current: $current_status)"
+            exit 1
+        fi
+
+        worktree_path=$(yq -r '.paths.worktrees // ".worktrees"' aidd.yml)/"$FEATURE_ID"
+
+        # Merge PR if possible
+        if command -v gh &> /dev/null && [ -d "$worktree_path" ]; then
+            (cd "$worktree_path" && gh pr merge --merge --delete-branch 2>/dev/null) || true
+        fi
+
+        # Cleanup
+        git worktree remove "$worktree_path" --force 2>/dev/null || true
+        git branch -D "feature/$FEATURE_ID" 2>/dev/null || true
+        yq -i "(.features[] | select(.id == \"$FEATURE_ID\") | .status) = \"merged\"" feature-queue.yml
+        echo "Feature '$FEATURE_ID' merged and cleaned up."
+        ;;
+
+    reject)
+        FEATURE_ID="${1:-}"
+        REASON="${2:-no reason given}"
+        if [ -z "$FEATURE_ID" ]; then
+            echo "Usage: aidd reject <feature-id> \"<reason>\""
+            exit 1
+        fi
+
+        worktree_path=$(yq -r '.paths.worktrees // ".worktrees"' aidd.yml)/"$FEATURE_ID"
+        git worktree remove "$worktree_path" --force 2>/dev/null || true
+        git branch -D "feature/$FEATURE_ID" 2>/dev/null || true
+        yq -i "(.features[] | select(.id == \"$FEATURE_ID\") | .status) = \"queued\"" feature-queue.yml
+        yq -i "(.features[] | select(.id == \"$FEATURE_ID\") | .feedback) = \"$REASON\"" feature-queue.yml
+        echo "Feature '$FEATURE_ID' rejected. Will retry with feedback."
+        ;;
+
+    skip)
+        FEATURE_ID="${1:-}"
+        if [ -z "$FEATURE_ID" ]; then
+            echo "Usage: aidd skip <feature-id>"
+            exit 1
+        fi
+        yq -i "(.features[] | select(.id == \"$FEATURE_ID\") | .status) = \"queued\"" feature-queue.yml
+        echo "Feature '$FEATURE_ID' re-queued."
+        ;;
+
+    logs)
+        FEATURE_ID="${1:-}"
+        if [ -z "$FEATURE_ID" ]; then
+            echo "Usage: aidd logs <feature-id>"
+            exit 1
+        fi
+        state_dir=$(yq -r '.paths.state // ".aidd"' aidd.yml 2>/dev/null || echo ".aidd")
+        log_file="$state_dir/logs/$FEATURE_ID.log"
+        if [ -f "$log_file" ]; then
+            tail -50 "$log_file"
+        else
+            echo "No logs found for '$FEATURE_ID'"
+        fi
+        ;;
+
+    help|--help|-h)
+        echo "AIDD — Autonomous AI Development Daemon"
+        echo ""
+        echo "Usage: aidd <command> [args]"
+        echo ""
+        echo "Commands:"
+        echo "  init                Create aidd.yml + feature-queue.yml in current dir"
+        echo "  start [--once]      Start conductor (--once for single pass)"
+        echo "  start --dry-run     Show what would happen"
+        echo "  status              Pipeline overview"
+        echo "  queue               View feature queue"
+        echo "  approve <id>        Merge completed feature"
+        echo "  reject <id> <msg>   Reject with feedback (re-queues)"
+        echo "  skip <id>           Re-queue a stuck feature"
+        echo "  logs <id>           View last 50 lines of agent output"
+        echo "  help                This message"
+        ;;
+
+    *)
+        echo "Unknown command: $CMD"
+        echo "Run 'aidd help' for usage."
+        exit 1
+        ;;
+esac

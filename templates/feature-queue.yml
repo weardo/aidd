@@ -1,0 +1,35 @@
+version: 1
+
+# Feature Queue — add features here, conductor picks them up
+#
+# Status lifecycle: queued → running → review → merged
+#                              ↓
+#                           stuck → queued (via aidd skip)
+#
+# Fields:
+#   id:          unique identifier (used for branch names, logs)
+#   spec:        path to feature spec file
+#   plan:        path to implementation plan file
+#   priority:    lower number = higher priority
+#   status:      queued | running | review | merged | stuck | abandoned
+#   depends_on:  list of feature IDs that must be merged first
+#   feedback:    filled by `aidd reject` — injected into prompt on retry
+
+features: []
+
+# Example:
+#   - id: data-platform
+#     spec: docs/specs/data-platform.md
+#     plan: docs/plans/data-platform-plan.md
+#     priority: 1
+#     status: queued
+#     depends_on: []
+#     feedback: ""
+#
+#   - id: strategy-engine
+#     spec: docs/specs/strategy-engine.md
+#     plan: docs/plans/strategy-engine-plan.md
+#     priority: 2
+#     status: queued
+#     depends_on: [data-platform]
+#     feedback: ""

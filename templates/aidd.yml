@@ -1,0 +1,93 @@
+version: 1
+
+project:
+  name: my-project               # display name for notifications
+
+# Agent settings
+agent:
+  max_parallel: 1                # concurrent worktree agents (increase if machine can handle it)
+  model: sonnet                  # opus | sonnet | haiku (sonnet is best cost/quality for implementation)
+  permission_mode: auto          # auto | bypassPermissions
+  output_format: stream-json     # stream-json for structured output parsing
+  timeout_hours: 4               # kill agent after this many hours
+  allowed_tools:                 # restrict agent capabilities
+    - Edit
+    - Write
+    - Bash
+    - Read
+    - Grep
+    - Glob
+
+# Project-specific shell commands
+commands:
+  test: ""                       # e.g., "pytest tests/ -x -q" or "pnpm test --run"
+  lint: ""                       # e.g., "ruff check . --fix" or "pnpm lint --fix"
+  typecheck: ""                  # e.g., "pnpm tsc --noEmit" (empty = skip)
+  build: ""                      # e.g., "pnpm build" (empty = skip)
+
+# Instructions injected into agent prompt (NOT shell commands)
+prompt_instructions:
+  pre_implement: |
+    Before starting, read CLAUDE.md for project conventions.
+  post_implement: |
+    After all tests pass, verify the implementation is complete.
+
+# Where things live
+paths:
+  specs: docs/specs/
+  plans: docs/plans/
+  worktrees: .worktrees/         # gitignored
+  state: .aidd/                  # gitignored
+
+# Implementation prompt template
+# Variables: {project_name}, {plan_path}, {spec_path}, {feature_id},
+#            {test_cmd}, {lint_cmd}, {feedback},
+#            {pre_implement_instructions}, {post_implement_instructions}
+prompt_template: |
+  You are executing an autonomous implementation task for {project_name}.
+
+  Plan: {plan_path}
+  Spec: {spec_path}
+
+  {pre_implement_instructions}
+
+  Instructions:
+  1. Read the plan file — this is your source of truth
+  2. Read CLAUDE.md for project conventions
+  3. Follow TDD: test first → implement → verify → lint
+  4. After each passing phase, commit with message: "[aidd:{feature_id}] phase N: <description>"
+  5. If stuck after 3 attempts on any task, stop and explain what's blocking you
+
+  Test command: {test_cmd}
+  Lint command: {lint_cmd}
+
+  {feedback}
+
+  Do NOT install new dependencies unless the plan says to.
+
+  {post_implement_instructions}
+
+# Pipeline behavior
+pipeline:
+  pause_on_failure: false        # skip stuck features, continue queue
+  auto_pr: true                  # create PR on completion
+  auto_merge: false              # always require human approval
+
+# Schedule
+schedule:
+  timezone: Asia/Kolkata
+
+# Notifications
+notifications:
+  telegram:
+    enabled: false               # set to true after configuring ~/.aidd/.env
+    notify_on: [complete, failed, stuck]
+
+# Human gates
+gates:
+  pr_merge: true                 # always require human to merge
+
+# Maintenance
+maintenance:
+  log_retention_days: 7
+  min_disk_space_gb: 2
