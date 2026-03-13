@@ -85,31 +85,28 @@ if [[ ":$PATH:" != *":$LINK_DIR:"* ]]; then
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
-# 3. Telegram setup (optional)
+# 3. Telegram setup (non-interactive — configure via env vars or .env file)
 echo ""
-echo -e "${YELLOW}Telegram setup (optional — press Enter to skip)${NC}"
-echo ""
+echo -e "${YELLOW}Telegram setup...${NC}"
 
 if [ -f "$AIDD_DIR/.env" ]; then
     echo -e "  ${GREEN}✓${NC} .env already exists, skipping"
-else
-    read -p "  Telegram Bot Token (from @BotFather, or Enter to skip): " TG_TOKEN
-    if [ -n "$TG_TOKEN" ]; then
-        read -p "  Your Telegram Chat ID: " TG_CHAT_ID
-        cat > "$AIDD_DIR/.env" <<EOF
-AIDD_TELEGRAM_TOKEN=$TG_TOKEN
-AIDD_TELEGRAM_CHAT_ID=$TG_CHAT_ID
+elif [ -n "${AIDD_TELEGRAM_TOKEN:-}" ] && [ -n "${AIDD_TELEGRAM_CHAT_ID:-}" ]; then
+    # Accept from environment variables (agent-friendly)
+    cat > "$AIDD_DIR/.env" <<EOF
+AIDD_TELEGRAM_TOKEN=$AIDD_TELEGRAM_TOKEN
+AIDD_TELEGRAM_CHAT_ID=$AIDD_TELEGRAM_CHAT_ID
 EOF
-        chmod 600 "$AIDD_DIR/.env"
-        echo -e "  ${GREEN}✓${NC} Telegram configured in .env"
-    else
-        cat > "$AIDD_DIR/.env" <<EOF
+    chmod 600 "$AIDD_DIR/.env"
+    echo -e "  ${GREEN}✓${NC} Telegram configured from env vars"
+else
+    cat > "$AIDD_DIR/.env" <<EOF
 # AIDD_TELEGRAM_TOKEN=your-bot-token
 # AIDD_TELEGRAM_CHAT_ID=your-chat-id
 EOF
-        chmod 600 "$AIDD_DIR/.env"
-        echo -e "  ⚠ Skipped — edit ~/.aidd/.env later to enable Telegram"
-    fi
+    chmod 600 "$AIDD_DIR/.env"
+    echo -e "  ⚠ Telegram not configured — edit ~/.aidd/.env or re-run with:"
+    echo "    AIDD_TELEGRAM_TOKEN=xxx AIDD_TELEGRAM_CHAT_ID=yyy ~/.aidd/setup.sh"
 fi
 
 # 4. Done

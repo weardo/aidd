@@ -21,24 +21,81 @@ for arg in "$@"; do
     esac
 done
 
-# Resolve project config
-if [ ! -f "aidd.yml" ]; then
-    echo "ERROR: No aidd.yml in current directory. Run 'aidd init' first."
+# Resolve project config — aidd.yml is optional, all fields have defaults
+if [ ! -f "aidd.yml" ] && [ ! -f "feature-queue.yml" ]; then
+    echo "ERROR: No aidd.yml or feature-queue.yml found. Run 'aidd init' first."
     exit 1
 fi
 
-PROJECT_NAME=$(yq -r '.project.name // "unnamed"' aidd.yml)
-TEST_CMD=$(yq -r '.commands.test // ""' aidd.yml)
-LINT_CMD=$(yq -r '.commands.lint // ""' aidd.yml)
-MAX_PARALLEL=$(yq -r '.agent.max_parallel // 1' aidd.yml)
-MODEL=$(yq -r '.agent.model // "sonnet"' aidd.yml)
-PERMISSION_MODE=$(yq -r '.agent.permission_mode // "auto"' aidd.yml)
-TIMEOUT_HOURS=$(yq -r '.agent.timeout_hours // 4' aidd.yml)
-WORKTREE_DIR=$(yq -r '.paths.worktrees // ".worktrees"' aidd.yml)
-STATE_DIR=$(yq -r '.paths.state // ".aidd"' aidd.yml)
-PROMPT_TEMPLATE=$(yq -r '.prompt_template // ""' aidd.yml)
-PRE_INSTRUCTIONS=$(yq -r '.prompt_instructions.pre_implement // ""' aidd.yml)
-POST_INSTRUCTIONS=$(yq -r '.prompt_instructions.post_implement // ""' aidd.yml)
+# Auto-detect project name from directory if not in config
+DIR_NAME=$(basename "$PWD")
+PROJECT_NAME=$(yq -r '.project.name // ""' aidd.yml 2>/dev/null || echo "")
+PROJECT_NAME="${PROJECT_NAME:-$DIR_NAME}"
+
+# Commands — auto-detect test runner if not configured
+TEST_CMD=$(yq -r '.commands.test // ""' aidd.yml 2>/dev/null || echo "")
+LINT_CMD=$(yq -r '.commands.lint // ""' aidd.yml 2>/dev/null || echo "")
+if [ -z "$TEST_CMD" ]; then
+    # Auto-detect test command
+    if [ -f "pytest.ini" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+        TEST_CMD="python -m pytest tests/ -x -q"
+    elif [ -f "package.json" ]; then
+        if grep -q '"vitest"' package.json 2>/dev/null; then
+            TEST_CMD="npx vitest run"
+        elif grep -q '"jest"' package.json 2>/dev/null; then
+            TEST_CMD="npx jest"
+        elif grep -q '"test"' package.json 2>/dev/null; then
+            TEST_CMD="npm test"
+        fi
+    elif [ -f "go.mod" ]; then
+        TEST_CMD="go test ./..."
+    elif [ -f "Cargo.toml" ]; then
+        TEST_CMD="cargo test"
+    fi
+fi
+
+# Agent settings with defaults
+MAX_PARALLEL=$(yq -r '.agent.max_parallel // 1' aidd.yml 2>/dev/null || echo "1")
+MODEL=$(yq -r '.agent.model // "sonnet"' aidd.yml 2>/dev/null || echo "sonnet")
+PERMISSION_MODE=$(yq -r '.agent.permission_mode // "auto"' aidd.yml 2>/dev/null || echo "auto")
+TIMEOUT_HOURS=$(yq -r '.agent.timeout_hours // 4' aidd.yml 2>/dev/null || echo "4")
+
+# Paths with defaults
+WORKTREE_DIR=$(yq -r '.paths.worktrees // ".worktrees"' aidd.yml 2>/dev/null || echo ".worktrees")
+WORKTREE_DIR="${WORKTREE_DIR%/}"  # strip trailing slash
+STATE_DIR=$(yq -r '.paths.state // ".aidd"' aidd.yml 2>/dev/null || echo ".aidd")
+
+# Prompt customization (optional overrides)
+PRE_INSTRUCTIONS=$(yq -r '.prompt_instructions.pre_implement // ""' aidd.yml 2>/dev/null || echo "")
+POST_INSTRUCTIONS=$(yq -r '.prompt_instructions.post_implement // ""' aidd.yml 2>/dev/null || echo "")
+CUSTOM_PROMPT_TEMPLATE=$(yq -r '.prompt_template // ""' aidd.yml 2>/dev/null || echo "")
+
+# Built-in default prompt template
+DEFAULT_PROMPT_TEMPLATE='You are executing an autonomous implementation task for {project_name}.
+
+Plan: {plan_path}
+Spec: {spec_path}
+
+{pre_implement_instructions}
+
+Instructions:
+1. Read the plan file — this is your source of truth
+2. If CLAUDE.md exists, read it for project conventions
+3. Follow TDD: test first → implement → verify
+4. After each passing phase, commit with message: "[aidd:{feature_id}] phase N: <description>"
+5. If stuck after 3 attempts on any task, stop and explain what is blocking you
+
+Test command: {test_cmd}
+Lint command: {lint_cmd}
+
+{feedback}
+
+Do NOT install new dependencies unless the plan says to.
+
+{post_implement_instructions}'
+
+# Use custom template if provided, otherwise use built-in default
+PROMPT_TEMPLATE="${CUSTOM_PROMPT_TEMPLATE:-$DEFAULT_PROMPT_TEMPLATE}"
 
 mkdir -p "$WORKTREE_DIR" "$STATE_DIR/logs" "$STATE_DIR/progress"
 
@@ -66,7 +123,7 @@ preflight() {
 
     # Check disk space (2GB minimum)
     local free_gb
-    free_gb=$(df -g . | awk 'NR==2 {print $4}' 2>/dev/null || echo "999")
+    free_gb=$(df -m . | awk 'NR==2 {print int($4/1024)}' 2>/dev/null || echo "999")
     if [ "$free_gb" -lt 2 ]; then
         echo "PREFLIGHT FAIL: Only ${free_gb}GB free disk space"
         return 1
@@ -142,6 +199,20 @@ run_feature() {
 
     echo "[$(date '+%H:%M:%S')] Starting feature: $feature_id"
 
+    # Build prompt first (needed for dry-run output)
+    local prompt
+    prompt=$(build_prompt "$feature_id")
+
+    if [ "$DRY_RUN" = true ]; then
+        echo "  [DRY RUN] Would create worktree at $worktree_path"
+        echo "  [DRY RUN] Would run claude -p --model $MODEL --permission-mode $PERMISSION_MODE"
+        echo "  [DRY RUN] Prompt:"
+        echo "  ---"
+        echo "$prompt" | sed 's/^/  /'
+        echo "  ---"
+        return 0
+    fi
+
     # Create worktree
     if [ -d "$worktree_path" ]; then
         echo "  Worktree exists, cleaning up..."
@@ -160,16 +231,6 @@ run_feature() {
 EOF
 
     notify "🚀 *$PROJECT_NAME* — Starting: \`$feature_id\`"
-
-    # Build prompt
-    local prompt
-    prompt=$(build_prompt "$feature_id")
-
-    if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY RUN] Would run claude -p in $worktree_path"
-        echo "  [DRY RUN] Prompt: ${prompt:0:200}..."
-        return 0
-    fi
 
     # Spawn claude -p in worktree with timeout
     local exit_code=0
@@ -314,10 +375,10 @@ echo "  AIDD Conductor — $PROJECT_NAME"
 echo "  $(date)"
 echo "========================================"
 
-if [ "$ONCE" = true ]; then
+if [ "$ONCE" = true ] || [ "$DRY_RUN" = true ]; then
     conductor_pass
     echo ""
-    echo "Single pass complete."
+    [ "$DRY_RUN" = true ] && echo "Dry run complete." || echo "Single pass complete."
 else
     notify "🔄 *$PROJECT_NAME* — AIDD Conductor started"
     while true; do

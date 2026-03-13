@@ -10,22 +10,41 @@ shift 2>/dev/null || true
 
 case "$CMD" in
     init)
-        if [ -f "aidd.yml" ]; then
-            echo "aidd.yml already exists in this directory."
+        if [ -f "aidd.yml" ] && [ -f "feature-queue.yml" ]; then
+            echo "AIDD already initialized (aidd.yml + feature-queue.yml exist)."
             exit 1
         fi
-        cp "$AIDD_HOME/templates/aidd.yml" ./aidd.yml
-        cp "$AIDD_HOME/templates/feature-queue.yml" ./feature-queue.yml
 
-        # Add to .gitignore if it exists
+        # Copy templates if missing
+        [ -f "aidd.yml" ] || cp "$AIDD_HOME/templates/aidd.yml" ./aidd.yml
+        [ -f "feature-queue.yml" ] || cp "$AIDD_HOME/templates/feature-queue.yml" ./feature-queue.yml
+
+        # Create standard directories
+        mkdir -p docs/specs docs/plans .worktrees .aidd/logs .aidd/progress
+
+        # Add to .gitignore
         if [ -f ".gitignore" ]; then
             if ! grep -q ".worktrees/" .gitignore 2>/dev/null; then
                 echo -e "\n# AIDD\n.worktrees/\n.aidd/" >> .gitignore
             fi
+        else
+            echo -e "# AIDD\n.worktrees/\n.aidd/" > .gitignore
         fi
 
-        echo "Created aidd.yml and feature-queue.yml"
-        echo "Edit them for your project, then run: aidd start"
+        # Auto-detect project name
+        local dir_name
+        dir_name=$(basename "$PWD")
+
+        echo "AIDD initialized for '$dir_name'"
+        echo ""
+        echo "  Created: aidd.yml, feature-queue.yml, docs/specs/, docs/plans/"
+        echo ""
+        echo "Quick start:"
+        echo "  1. Create a spec:  docs/specs/my-feature.md"
+        echo "  2. Create a plan:  docs/plans/my-feature-plan.md"
+        echo "  3. Add to queue:   edit feature-queue.yml"
+        echo "  4. Test:           aidd start --dry-run"
+        echo "  5. Run:            aidd start --once"
         ;;
 
     start)

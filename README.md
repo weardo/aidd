@@ -1,72 +1,95 @@
 # AIDD — Autonomous AI Development Daemon
 
-Clone on any machine. Run `./setup.sh`. Get autonomous overnight AI development.
+Autonomous overnight AI development. Clone → setup → queue features → sleep.
 
-## What It Does
-
-- Reads a feature queue (`feature-queue.yml`) from any project
-- Spawns headless Claude Code (`claude -p`) per feature in isolated git worktrees
-- Monitors progress, handles failures, creates PRs
-- Notifies you via Telegram when features complete or get stuck
-- Runs on your Claude Max subscription — $0 extra cost
-
-## Quick Start
+## Install (for AI agents or humans)
 
 ```bash
-git clone git@github.com:<you>/aidd.git ~/.aidd
+git clone git@github-weardo:weardo/aidd.git ~/.aidd
 ~/.aidd/setup.sh
-
-# In any project:
-cd ~/your-project
-aidd init
-# Edit aidd.yml and feature-queue.yml
-aidd start
 ```
 
-## Project Setup
+Prerequisites installed automatically: `yq`, `jq`. Required: `claude` (Claude Code CLI), `git`.
+
+## Add to any project
 
 ```bash
-aidd init                # creates aidd.yml + feature-queue.yml templates
-aidd start               # start conductor (loops every 5 min)
-aidd start --once        # single pass (for cron)
-aidd start --dry-run     # show what would happen
-aidd status              # pipeline overview
-aidd queue               # view feature queue
-aidd approve <id>        # mark feature for merge
-aidd logs <id>           # view agent output
+cd ~/your-project
+aidd init                # zero-config — auto-detects project name, test command
+aidd start --dry-run     # verify prompt looks right
+aidd start --once        # run one feature
 ```
+
+That's it. Everything else has sensible defaults.
+
+## AI Agent Setup Guide
+
+**If you are an AI agent setting up AIDD for a project, read `~/.aidd/prompts/setup-project.md`** for step-by-step instructions.
+
+## CLI Reference
+
+| Command | Purpose |
+|---------|---------|
+| `aidd init` | Create config files + directories |
+| `aidd start` | Start conductor (loops every 5 min) |
+| `aidd start --once` | Single pass (for cron) |
+| `aidd start --dry-run` | Preview without running |
+| `aidd status` | Pipeline overview |
+| `aidd queue` | View feature queue |
+| `aidd approve <id>` | Merge completed feature |
+| `aidd reject <id> "reason"` | Reject with feedback (re-queues) |
+| `aidd skip <id>` | Re-queue stuck feature |
+| `aidd logs <id>` | View agent output |
 
 ## How It Works
 
 ```
-feature-queue.yml          You queue features with specs + plans
+feature-queue.yml          Queue features with specs + plans
        |
-   conductor.sh            Picks next eligible feature
+   conductor.sh            Picks next queued feature
        |
-  git worktree add         Creates isolated branch
+  git worktree add         Isolated branch per feature
        |
-  claude -p "<prompt>"     Headless Claude implements the feature
+  claude -p "<prompt>"     Headless Claude implements (TDD)
        |
-  gh pr create             Creates PR when tests pass
+  gh pr create             PR when tests pass
        |
-  Telegram notification    You review + approve from phone
+  Telegram notification    Review + approve from phone
 ```
 
-## Config: `aidd.yml`
+## Config: `aidd.yml` (optional)
 
-Drop in any project root. Teaches AIDD how to work with that project.
+All fields are optional. Defaults:
+- **model**: sonnet
+- **test command**: auto-detected (pytest/jest/vitest/go test/cargo test)
+- **permission_mode**: auto
+- **timeout**: 4 hours
+- **worktrees**: `.worktrees/`
 
-See `templates/aidd.yml` for full reference.
+Only add config for values you want to override:
+```yaml
+version: 1
+project:
+  name: my-project
+commands:
+  test: "python -m pytest tests/ -x -q"
+```
 
-## Telegram Setup
+## Telegram (optional)
 
-1. Message @BotFather on Telegram, create a bot, get the token
-2. Message your bot, then get your chat ID from `https://api.telegram.org/bot<TOKEN>/getUpdates`
-3. Run `./setup.sh` and enter the token + chat ID (or edit `~/.aidd/.env`)
+```bash
+# Option 1: env vars during setup
+AIDD_TELEGRAM_TOKEN=xxx AIDD_TELEGRAM_CHAT_ID=yyy ~/.aidd/setup.sh
+
+# Option 2: edit directly
+echo 'AIDD_TELEGRAM_TOKEN=xxx' >> ~/.aidd/.env
+echo 'AIDD_TELEGRAM_CHAT_ID=yyy' >> ~/.aidd/.env
+```
+
+Get token from @BotFather. Get chat ID from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
 ## Requirements
 
-- `claude` CLI (Claude Code) with active Max subscription
-- `git`
-- `yq` and `jq` (installed by setup.sh)
+- `claude` CLI with active Max subscription ($0 extra cost)
+- `git` with SSH access to repo
 - `gh` (GitHub CLI, optional — for PR creation)
